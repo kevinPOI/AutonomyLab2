@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import mujoco as mj
 from mujoco import viewer
@@ -70,6 +71,68 @@ TRIAL_CONFIGS = [
     {"label": "Trial 3 -> Right Top Shelf",
      "right_shelf": "RShelfTop",     "left_dx":  0.01, "right_dx": -0.02},
 ]
+
+### random range for point
+# LEFT_DX_RANGE = (-0.035, 0.035)
+# RIGHT_DX_RANGE = (-0.035, 0.035)
+LEFT_DX_RANGE = (-0.1, 0.1)
+RIGHT_DX_RANGE = (-0.1, 0.1)
+# Which right shelf each trial targets when using --sample (cycled if n_trials > len)
+SAMPLE_RIGHT_SHELVES = ["RShelfMiddle", "RShelfBottom", "RShelfTop"]
+
+# Mocap bodies (added to MJCF) for showing planned release poses in the viewer
+VIZ_BODY_LEFT = "viz_place_left"
+VIZ_BODY_RIGHT = "viz_place_right"
+
+
+def add_mocap_marker_sphere(tree, name, radius=0.012, rgba="1 0 0 0.4"):
+    """Red translucent sphere, no collision — position driven by data.mocap_pos."""
+    worldbody = tree.getroot().find("worldbody")
+    b = ET.SubElement(worldbody, "body", {"name": name, "mocap": "true"})
+    ET.SubElement(b, "geom", {
+        "type": "sphere",
+        "size": str(radius),
+        "rgba": rgba,
+        "contype": "0",
+        "conaffinity": "0",
+    })
+
+
+def release_xyz_from_refs(left_ref, right_ref):
+    """Same (x,y,z) as release_on_left / release_on_right waypoints."""
+    lx, ly, lz = left_ref
+    rx, ry, rz = right_ref
+    p_left = np.array([lx, ly - 0.05, lz + 0.08], dtype=float)
+    p_right = np.array([rx, ry + 0.10, rz + 0.03], dtype=float)
+    return p_left, p_right
+
+
+def update_place_markers(model, data, left_ref, right_ref):
+    """Move mocap spheres to the two planned release locations."""
+    p_l, p_r = release_xyz_from_refs(left_ref, right_ref)
+    bid_l = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, VIZ_BODY_LEFT)
+    bid_r = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, VIZ_BODY_RIGHT)
+    mid_l = model.body_mocapid[bid_l]
+    mid_r = model.body_mocapid[bid_r]
+    data.mocap_pos[mid_l] = p_l
+    data.mocap_pos[mid_r] = p_r
+    mj.mj_forward(model, data)
+
+
+def sample_trial_configs(rng, n_trials, shelf_names):
+    """Build n_trials configs with random x-offsets on left/right shelves."""
+    cfgs = []
+    for i in range(n_trials):
+        name = shelf_names[i % len(shelf_names)]
+        ldx = float(rng.uniform(*LEFT_DX_RANGE))
+        rdx = float(rng.uniform(*RIGHT_DX_RANGE))
+        cfgs.append({
+            "label": f"Trial {i + 1} -> {name}  (left_dx={ldx:+.4f}, right_dx={rdx:+.4f})",
+            "right_shelf": name,
+            "left_dx": ldx,
+            "right_dx": rdx,
+        })
+    return cfgs
 
 # --------------------------------------------------------------------- #
 #                          Helper functions                              #
@@ -269,7 +332,25 @@ def reset_sim(model, data, v):
 # --------------------------------------------------------------------- #
 
 if __name__ == "__main__":
-    np.random.seed(13)
+    ap = argparse.ArgumentParser(description="Pick / regrasp / place with optional random shelf offsets.")
+    ap.add_argument("--sample", action="store_true",
+                    help="randomize left_dx and right_dx each trial (see LEFT_DX_RANGE / RIGHT_DX_RANGE)")
+    ap.add_argument("--seed", type=int, default=13, help="RNG seed (default 13)")
+    ap.add_argument("--trials", type=int, default=3, metavar="N", help="how many trials to run (default 3)")
+    args = ap.parse_args()
+
+    np.random.seed(args.seed)
+
+    if args.sample:
+        rng = np.random.default_rng(args.seed)
+        trial_configs = sample_trial_configs(rng, args.trials, SAMPLE_RIGHT_SHELVES)
+        print(f"Using --sample: seed={args.seed}, ranges LEFT_DX_RANGE={LEFT_DX_RANGE}, "
+              f"RIGHT_DX_RANGE={RIGHT_DX_RANGE}")
+    else:
+        if args.trials <= len(TRIAL_CONFIGS):
+            trial_configs = TRIAL_CONFIGS[: args.trials]
+        else:
+            trial_configs = [TRIAL_CONFIGS[i % len(TRIAL_CONFIGS)] for i in range(args.trials)]
 
     modelTree = ET.parse(ROOT_MODEL_XML)
 
@@ -283,6 +364,8 @@ if __name__ == "__main__":
     rt.add_free_block_to_model(
         tree=modelTree, name="Block", pos=block_xyz,
         density=20, size=[0.02, 0.02, 0.02], rgba=[0.0, 0.9, 0.2, 1], free=True)
+    add_mocap_marker_sphere(modelTree, VIZ_BODY_LEFT)
+    add_mocap_marker_sphere(modelTree, VIZ_BODY_RIGHT)
     modelTree.write(MODEL_XML, encoding="utf-8", xml_declaration=True)
 
     model = mj.MjModel.from_xml_path(MODEL_XML)
@@ -313,7 +396,7 @@ if __name__ == "__main__":
     block_body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "Block")
 
     try:
-        for t_idx, cfg in enumerate(TRIAL_CONFIGS):
+        for t_idx, cfg in enumerate(trial_configs):
             print(f"\n{'='*60}")
             print(f"  {cfg['label']}")
             print(f"{'='*60}")
@@ -332,6 +415,9 @@ if __name__ == "__main__":
 
             print(f"  Left  shelf target: ({left_ref[0]:.3f}, {left_ref[1]:.3f}, {left_ref[2]:.3f})")
             print(f"  Right shelf target: ({right_ref[0]:.3f}, {right_ref[1]:.3f}, {right_ref[2]:.3f})")
+
+            update_place_markers(model, data, left_ref, right_ref)
+            v.sync()
 
             # --- Phase 1: pick from table, place on left shelf, retract ---
             p1_wps = build_phase1_wps(block_xyz, left_ref)
@@ -356,7 +442,7 @@ if __name__ == "__main__":
 
             print(f"  {cfg['label']} -- complete!")
 
-            if t_idx < len(TRIAL_CONFIGS) - 1:
+            if t_idx < len(trial_configs) - 1:
                 print("  Resetting for next trial ...")
                 reset_sim(model, data, v)
 

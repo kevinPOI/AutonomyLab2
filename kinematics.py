@@ -137,6 +137,7 @@ class FrankArm:
 
         W = np.diag([1, 1, 100, 100, 1, 1, 100])
         W[6, 0] = 1
+        # W[6, 6] = 1
         C = np.diag([1000000, 1000000, 1000000, 1000, 1000, 1000])
 
         q = np.array(ang, dtype=float)
