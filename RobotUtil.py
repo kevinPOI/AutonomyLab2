@@ -50,7 +50,7 @@ def R2axisang(R: np.ndarray)->(np.ndarray, float):
         - axis: 3x1 axis of rotation
         - ang: angle of rotation
     """
-    # Numerical safety: trace can drift slightly outside [-1, 1]
+    # trace sometimes >1 from float error
     c = (R[0, 0] + R[1, 1] + R[2, 2] - 1) / 2
     c = max(-1.0, min(1.0, c))
     ang = math.acos(c)
@@ -64,10 +64,7 @@ def R2axisang(R: np.ndarray)->(np.ndarray, float):
     return [x, y, z], ang
 
 def R2rpy(R: np.ndarray)->np.ndarray:
-    """
-    Computes roll-pitch-yaw (XYZ) from a rotation matrix.
-    Returns rpy in radians.
-    """
+    # xyz euler from R, radians
     r = math.atan2(R[2, 1], R[2, 2])
     p = math.atan2(-R[2, 0], math.sqrt(R[2, 1]**2 + R[2, 2]**2))
     y = math.atan2(R[1, 0], R[0, 0])

@@ -86,7 +86,7 @@ VIZ_BODY_RIGHT = "viz_place_right"
 
 
 def add_mocap_marker_sphere(tree, name, radius=0.012, rgba="1 0 0 0.4"):
-    """Red translucent sphere, no collision — position driven by data.mocap_pos."""
+    # mocap marker for viz only
     worldbody = tree.getroot().find("worldbody")
     b = ET.SubElement(worldbody, "body", {"name": name, "mocap": "true"})
     ET.SubElement(b, "geom", {
@@ -99,7 +99,7 @@ def add_mocap_marker_sphere(tree, name, radius=0.012, rgba="1 0 0 0.4"):
 
 
 def release_xyz_from_refs(left_ref, right_ref):
-    """Same (x,y,z) as release_on_left / release_on_right waypoints."""
+    # where the gripper opens in phase1 / phase2
     lx, ly, lz = left_ref
     rx, ry, rz = right_ref
     p_left = np.array([lx, ly - 0.05, lz + 0.08], dtype=float)
@@ -108,7 +108,6 @@ def release_xyz_from_refs(left_ref, right_ref):
 
 
 def update_place_markers(model, data, left_ref, right_ref):
-    """Move mocap spheres to the two planned release locations."""
     p_l, p_r = release_xyz_from_refs(left_ref, right_ref)
     bid_l = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, VIZ_BODY_LEFT)
     bid_r = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, VIZ_BODY_RIGHT)
@@ -120,7 +119,6 @@ def update_place_markers(model, data, left_ref, right_ref):
 
 
 def sample_trial_configs(rng, n_trials, shelf_names):
-    """Build n_trials configs with random x-offsets on left/right shelves."""
     cfgs = []
     for i in range(n_trials):
         name = shelf_names[i % len(shelf_names)]
@@ -150,14 +148,13 @@ def gripper_cmd(g):
 
 
 def build_full_wps(block_xyz, left_ref, right_ref):
-    """Full waypoint chain (predefined positions) used only for reference IK."""
+    # ref IK only
     return build_phase1_wps(block_xyz, left_ref) + \
            build_phase2_wps([left_ref[0], left_ref[1]-0.05, left_ref[2]+0.02],
                             left_ref, right_ref, block_xyz)
 
 
 def build_phase1_wps(block_xyz, left_ref):
-    """Pick from table -> place on left shelf -> retract clear."""
     rd, pd, yd = R_DOWN
     lx, ly, lz = left_ref
     return [
@@ -173,7 +170,6 @@ def build_phase1_wps(block_xyz, left_ref):
 
 
 def build_phase2_wps(block_pos, left_ref, right_ref, block_xyz):
-    """Side grasp (using actual block pos) -> transfer -> right shelf -> return."""
     rd, pd, yd = R_DOWN
     rsl, psl, ysl = R_SIDE_LEFT
     rsr, psr, ysr = R_SIDE_RIGHT
@@ -201,9 +197,7 @@ def build_phase2_wps(block_pos, left_ref, right_ref, block_xyz):
 
 
 def _unwrap(q_new, q_ref):
-    """Shift each joint angle by ±2pi so it stays within pi of q_ref.
-    FK result is identical (rotation is 2pi-periodic), but numerical
-    continuity between consecutive IK solutions is preserved."""
+    # keep angles near previous soln so IK doesnt jump weirdly
     q = np.array(q_new, dtype=float)
     r = np.array(q_ref, dtype=float)
     q -= np.round((q - r) / (2 * np.pi)) * (2 * np.pi)
@@ -211,7 +205,6 @@ def _unwrap(q_new, q_ref):
 
 
 def _solve_with_seed(arm, seed, T_goal, q_prev):
-    """Run IK from *seed*, unwrap result relative to q_prev, return (q, jump)."""
     q_raw, _ = arm.IterInvKin(seed, T_goal)
     q = _unwrap(q_raw[:7], q_prev)
     jump = np.max(np.abs(q - q_prev))
@@ -219,43 +212,27 @@ def _solve_with_seed(arm, seed, T_goal, q_prev):
 
 
 def solve_ik_chain(cart_wps, arm, q_seed, ref_seeds=None, return_home=True):
-    """Solve IK sequentially for all waypoints.
-
-    Returns (N+1) x 8 array when return_home=False, (N+2) x 8 when True.
-    ref_seeds : optional reference joint solutions for fallback seeding.
-    """
     JUMP_THRESH = 1.0
 
     q_s = np.array(q_seed, dtype=float)
     jnt_wps = [list(q_seed) + [GRIPPER_OPEN]]
 
-    for idx, (name, wp) in enumerate(cart_wps):
+    for idx, (_, wp) in enumerate(cart_wps):
         g, x, y, z, r, p, yaw = wp
         T_goal = rt.rpyxyz2H([r, p, yaw], [x, y, z])
 
         q_new, jump = _solve_with_seed(arm, q_s.tolist(), T_goal, q_s)
-        tag = ""
 
         if jump > JUMP_THRESH and ref_seeds is not None and idx < len(ref_seeds):
             q_ref, jump_ref = _solve_with_seed(
                 arm, ref_seeds[idx].tolist(), T_goal, q_s)
             if jump_ref < jump:
                 q_new, jump = q_ref, jump_ref
-                tag = " [ref]"
 
         if jump > JUMP_THRESH:
             q_home, jump_home = _solve_with_seed(arm, Q_HOME, T_goal, q_s)
             if jump_home < jump:
                 q_new, jump = q_home, jump_home
-                tag = " [home]"
-
-        T_fk, _ = arm.ForwardKin(q_new.tolist())
-        p_fk = T_fk[-1][0:3, 3]
-        pos_err = np.linalg.norm(p_fk - T_goal[0:3, 3])
-        warn = "  *** WARN ***" if pos_err > 0.01 else ""
-        print(f"  [WP {idx:2d}] {name:22s}  tgt=({x:.3f},{y:.3f},{z:.3f})"
-              f"  fk=({p_fk[0]:.3f},{p_fk[1]:.3f},{p_fk[2]:.3f})"
-              f"  err={pos_err:.4f}  jmp={jump:.2f}{tag}{warn}")
 
         q_s = q_new.copy()
         jnt_wps.append(q_new.tolist() + [gripper_cmd(g)])
@@ -263,20 +240,17 @@ def solve_ik_chain(cart_wps, arm, q_seed, ref_seeds=None, return_home=True):
     if return_home:
         q_home = _unwrap(Q_HOME, q_s)
         jnt_wps.append(q_home.tolist() + [GRIPPER_OPEN])
-        print(f"  [WP {len(cart_wps):2d}] {'return_home':22s}  (joint-space Q_HOME)")
 
     return np.array(jnt_wps, dtype=float)
 
 
 def _pace(wall_t0, sim_t):
-    """Sleep to keep simulation at real-time speed."""
     drift = sim_t - (time.time() - wall_t0)
     if drift > 0:
         time.sleep(drift)
 
 
 def run_trajectory(model, data, v, jnt_wps, cart_wps):
-    """Execute joint-space trajectory with PD + gravity compensation."""
     arm_idx = list(range(7))
     dt = model.opt.timestep
     seg_steps = max(1, int(SEGMENT_DURATION / dt))
@@ -304,7 +278,6 @@ def run_trajectory(model, data, v, jnt_wps, cart_wps):
 
 
 def reset_sim(model, data, v):
-    """Reset simulation state and hold arm at Q_HOME until settled."""
     arm_idx = list(range(7))
     dt = model.opt.timestep
 
@@ -332,11 +305,10 @@ def reset_sim(model, data, v):
 # --------------------------------------------------------------------- #
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Pick / regrasp / place with optional random shelf offsets.")
-    ap.add_argument("--sample", action="store_true",
-                    help="randomize left_dx and right_dx each trial (see LEFT_DX_RANGE / RIGHT_DX_RANGE)")
-    ap.add_argument("--seed", type=int, default=13, help="RNG seed (default 13)")
-    ap.add_argument("--trials", type=int, default=3, metavar="N", help="how many trials to run (default 3)")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sample", action="store_true")
+    ap.add_argument("--seed", type=int, default=13)
+    ap.add_argument("--trials", type=int, default=3)
     args = ap.parse_args()
 
     np.random.seed(args.seed)
@@ -344,8 +316,6 @@ if __name__ == "__main__":
     if args.sample:
         rng = np.random.default_rng(args.seed)
         trial_configs = sample_trial_configs(rng, args.trials, SAMPLE_RIGHT_SHELVES)
-        print(f"Using --sample: seed={args.seed}, ranges LEFT_DX_RANGE={LEFT_DX_RANGE}, "
-              f"RIGHT_DX_RANGE={RIGHT_DX_RANGE}")
     else:
         if args.trials <= len(TRIAL_CONFIGS):
             trial_configs = TRIAL_CONFIGS[: args.trials]
@@ -387,7 +357,6 @@ if __name__ == "__main__":
     ref_right = get_block_pos(BLOCKS, "RShelfMiddle")
     ref_cart = build_full_wps(block_xyz, ref_left, ref_right)
     N_P1 = len(build_phase1_wps(block_xyz, ref_left))
-    print("Pre-computing reference IK chain ...")
     ref_jnt = solve_ik_chain(ref_cart, arm, Q_HOME)
     ref_seeds_all = ref_jnt[1:-1, :7]
     ref_seeds_p1 = ref_seeds_all[:N_P1]
@@ -397,10 +366,6 @@ if __name__ == "__main__":
 
     try:
         for t_idx, cfg in enumerate(trial_configs):
-            print(f"\n{'='*60}")
-            print(f"  {cfg['label']}")
-            print(f"{'='*60}")
-
             left_ref = [
                 left_shelf_base[0] + cfg["left_dx"],
                 left_shelf_base[1],
@@ -413,40 +378,27 @@ if __name__ == "__main__":
                 right_base[2],
             ]
 
-            print(f"  Left  shelf target: ({left_ref[0]:.3f}, {left_ref[1]:.3f}, {left_ref[2]:.3f})")
-            print(f"  Right shelf target: ({right_ref[0]:.3f}, {right_ref[1]:.3f}, {right_ref[2]:.3f})")
-
             update_place_markers(model, data, left_ref, right_ref)
             v.sync()
 
             # --- Phase 1: pick from table, place on left shelf, retract ---
             p1_wps = build_phase1_wps(block_xyz, left_ref)
-            print("  Phase 1 – Solving IK ...")
             p1_jnt = solve_ik_chain(p1_wps, arm, Q_HOME,
                                     ref_seeds=ref_seeds_p1, return_home=False)
-            print("  Phase 1 – Executing ...")
             run_trajectory(model, data, v, p1_jnt, p1_wps)
 
             # Read actual block position from simulation
             actual_pos = data.xpos[block_body_id].copy()
-            print(f"  Block actual pos: ({actual_pos[0]:.4f}, {actual_pos[1]:.4f}, {actual_pos[2]:.4f})")
 
             # --- Phase 2: side grasp (actual pos) -> transfer -> right shelf ---
             q_seed_p2 = p1_jnt[-1, :7].tolist()
             p2_wps = build_phase2_wps(actual_pos, left_ref, right_ref, block_xyz)
-            print("  Phase 2 – Solving IK ...")
             p2_jnt = solve_ik_chain(p2_wps, arm, q_seed_p2,
                                     ref_seeds=ref_seeds_p2, return_home=True)
-            print("  Phase 2 – Executing ...")
             run_trajectory(model, data, v, p2_jnt, p2_wps)
 
-            print(f"  {cfg['label']} -- complete!")
-
             if t_idx < len(trial_configs) - 1:
-                print("  Resetting for next trial ...")
                 reset_sim(model, data, v)
-
-        print("\n  All trials complete. Holding at Q_HOME ...")
         dt = model.opt.timestep
         q_home = np.array(Q_HOME)
         wall_t0 = time.time()

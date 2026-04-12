@@ -1,6 +1,5 @@
 import numpy as np
 import RobotUtil as rt
-import math
 
 
 class FrankArm:
@@ -96,8 +95,6 @@ class FrankArm:
 
         self.q[0:7] = ang
 
-        # Compute current joint and end effector coordinate frames (self.Tjoint).
-        # Joint axes are defined in the joint frame; convert to base frame when needed.
         self.J = np.zeros((6, 7))
         T = np.eye(4)
         for i in range(len(self.Rdesc)):
@@ -109,11 +106,9 @@ class FrankArm:
 
             if np.linalg.norm(axis_local) > 0:
                 self.Tjoint[i] = T
-                # Rotate about the joint's local axis, then update current frame
                 T = np.matmul(T, rt.MatrixExp(axis_local, ang[i]))
                 self.Tcurr[i] = T
             else:
-                # Fixed transform (no joint)
                 self.Tcurr[i] = T
 
         # Jacobian
