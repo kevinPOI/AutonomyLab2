@@ -158,9 +158,9 @@ if __name__ == "__main__":
     left_shelf_xyz = get_block_pos(BLOCKS, "LShelfBottom")
 
     pi = np.pi
-    down_grasp_y = (3.13714399, 0.00419659, -0.80013718 + pi/2)
+    down_grasp_y = (3.14, 0.0, -0.77 + pi/2)
     side_grasp = (1.53, 0.77, 3.12)
-    down_grasp_x = (3.13714399, 0.00419659, -0.80013718)
+    down_grasp_x = (3.14, 0.0, -0.77)
 
     def resolve_pick_xyz(pick_pos):
         if len(pick_pos) == 3 and pick_pos[0] == "dropoff":
