@@ -806,13 +806,32 @@ class RealTicTacToeRobot:
         self._monitor_skill(waypoint_name)
         self.current_q = q_target.copy()
 
+    def _open_gripper_reliably(self):
+        # Clear any lingering grasp/error state from the previous close before
+        # asking the gripper to open, otherwise libfranka may ignore the open.
+        stop_gripper = getattr(self.fa, "stop_gripper", None)
+        if callable(stop_gripper):
+            try:
+                stop_gripper()
+            except Exception:
+                pass
+
+        open_fn = getattr(self.fa, "open_gripper", None)
+        if callable(open_fn):
+            try:
+                open_fn(block=True)
+            except TypeError:
+                open_fn()
+        else:
+            self.fa.goto_gripper(GRIPPER_OPEN, block=True)
+        self.current_gripper = GRIPPER_OPEN
+
     def _apply_gripper_command(self, waypoint_name):
         if waypoint_name == "close_gripper":
             self.fa.goto_gripper(GRIPPER_CLOSED)
             self.current_gripper = GRIPPER_CLOSED
         elif waypoint_name == "open_gripper":
-            self.fa.goto_gripper(GRIPPER_OPEN)
-            self.current_gripper = GRIPPER_OPEN
+            self._open_gripper_reliably()
 
     def _goto_home(self):
         self._validate_joint_waypoint(Q_HOME, "return_home joint waypoint")
@@ -842,8 +861,7 @@ class RealTicTacToeRobot:
             **self._motion_kwargs("project_real_jpos:return_home"),
         )
         self._monitor_skill("return_home")
-        self.fa.goto_gripper(GRIPPER_OPEN)
-        self.current_gripper = GRIPPER_OPEN
+        self._open_gripper_reliably()
         self._hold_with_safety(hold_durations[-1], "return_home hold")
         print("[project_real_jpos] completed waypoint: return_home")
         self.current_q = Q_HOME.copy()
@@ -896,9 +914,8 @@ class RealTicTacToeRobot:
     def reset(self):
         self.supply.reset()
         self._goto_home()
-        self.fa.goto_gripper(GRIPPER_OPEN)
+        self._open_gripper_reliably()
         self.current_q = Q_HOME.copy()
-        self.current_gripper = GRIPPER_OPEN
 
     def sync(self):
         return None
