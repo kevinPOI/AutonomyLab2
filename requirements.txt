@@ -1,0 +1,5 @@
+# Runtime dependencies for the pygame frontend.
+# rospy / geometry_msgs / std_msgs come from the ROS Noetic apt install
+# (ros-noetic-ros-base). On a machine without ROS, mock_ros.py stands in
+# automatically, so this file only needs to list the pygame frontend dep.
+pygame>=2.5,<3
