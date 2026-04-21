@@ -66,7 +66,7 @@ DEFAULT_EEF_SPEED_NOISE_FLOOR = 0.05
 
 Q_HOME = np.array([0.0, -0.5, 0.0, -2.0, 0.0, 1.5, 0.8], dtype=float)
 
-DOWN_GRASP_Y_RPY = (3.13714399, 0.00419659, -0.80013718 + np.pi / 2.0)
+DOWN_GRASP_Y_RPY = (3.13714399, 0.00419659, -0.80013718 + np.pi / 2.0 + np.pi / 4.0)
 DOWN_GRASP_X_RPY = (3.13714399, 0.00419659, -0.80013718)
 
 BLOCK_POSE_1 = [0.438, 0.288, -0.05]
@@ -74,18 +74,25 @@ BLOCK_POSE_2 = [0.438, 0.174, -0.05]
 BLOCK_POSE_3 = [0.576, 0.174, -0.05]
 BLOCK_POSE_4 = [0.576, 0.288, -0.05]
 
-SUPPLY_BLOCKS = (
+_SUPPLY_BLOCKS_RAW = (
     {"name": "Block", "pos": BLOCK_POSE_1, "rgba": [0.0, 0.2, 0.9, 1.0]},
     {"name": "Block_2", "pos": BLOCK_POSE_2, "rgba": [0.0, 0.2, 0.9, 1.0]},
     {"name": "Block_3", "pos": BLOCK_POSE_3, "rgba": [0.0, 0.2, 0.9, 1.0]},
     {"name": "Block_4", "pos": BLOCK_POSE_4, "rgba": [0.0, 0.2, 0.9, 1.0]},
 )
+# Pick the block closest to the robot base first, then increasing distance.
+SUPPLY_BLOCKS = tuple(
+    sorted(
+        _SUPPLY_BLOCKS_RAW,
+        key=lambda b: float(np.linalg.norm(np.array(b["pos"], dtype=float))),
+    )
+)
 
 BLOCK_NAMES = tuple(block["name"] for block in SUPPLY_BLOCKS)
 SUPPLY_POSITIONS = tuple(tuple(block["pos"]) for block in SUPPLY_BLOCKS)
 
-GRID_CENTER = np.array([0.520, -0.021, -0.05], dtype=float)
-GRID_BOTTOM_CENTER = np.array([0.622, -0.027, -0.05], dtype=float)
+GRID_CENTER = np.array([0.520, -0.021, -0.08], dtype=float)
+GRID_BOTTOM_CENTER = np.array([0.622, -0.027, -0.08], dtype=float)
 GRID_LOGICAL_ROW_STEP = GRID_BOTTOM_CENTER - GRID_CENTER
 # The user only specified the row direction; keep the existing 7.5 cm column spacing.
 GRID_LOGICAL_COL_STEP = np.array([0.0, 0.075, 0.0], dtype=float)
@@ -409,7 +416,7 @@ class RealTicTacToeRobot:
         torque_thresholds=None,
         home_duration=DEFAULT_HOME_DURATION,
         enable_workspace_check=True,
-        enable_joint_reachability_check=True,
+        enable_joint_reachability_check=False,
         enable_collision_check=False,
         enable_eef_speed_check=True,
         enable_force_check=True,
@@ -734,7 +741,22 @@ class RealTicTacToeRobot:
             self.fa.goto_gripper(GRIPPER_CLOSED)
             self.current_gripper = GRIPPER_CLOSED
         elif waypoint_name == "open_gripper":
-            self.fa.goto_gripper(GRIPPER_OPEN)
+            # Ensure any lingering grasp/error state from the previous close is
+            # cleared; otherwise libfranka may silently drop the goto_gripper.
+            stop_gripper = getattr(self.fa, "stop_gripper", None)
+            if callable(stop_gripper):
+                try:
+                    stop_gripper()
+                except Exception:
+                    pass
+            open_fn = getattr(self.fa, "open_gripper", None)
+            if callable(open_fn):
+                try:
+                    open_fn(block=True)
+                except TypeError:
+                    open_fn()
+            else:
+                self.fa.goto_gripper(GRIPPER_OPEN, block=True)
             self.current_gripper = GRIPPER_OPEN
 
     def _goto_home(self):
@@ -900,7 +922,11 @@ def parse_args(argv):
     parser.add_argument("--force-thresholds", type=float, nargs=6, default=None)
     parser.add_argument("--torque-thresholds", type=float, nargs=7, default=None)
     parser.add_argument("--disable-workspace-check", action="store_true")
-    parser.add_argument("--disable-joint-reachability-check", action="store_true")
+    parser.add_argument(
+        "--enable-joint-reachability-check",
+        action="store_true",
+        help="Enable the FrankaArm joint-limit reachability check (off by default).",
+    )
     parser.add_argument(
         "--enable-collision-check",
         action="store_true",
@@ -925,7 +951,7 @@ def main(argv=None):
         "torque_thresholds": args.torque_thresholds,
         "home_duration": args.home_duration,
         "enable_workspace_check": not args.disable_workspace_check,
-        "enable_joint_reachability_check": not args.disable_joint_reachability_check,
+        "enable_joint_reachability_check": bool(args.enable_joint_reachability_check),
         "enable_collision_check": bool(args.enable_collision_check),
         "enable_eef_speed_check": not args.disable_eef_speed_check,
         "enable_force_check": not args.disable_force_check,
