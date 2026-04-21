@@ -18,6 +18,17 @@ USING_REAL_ROS = not getattr(rospy, "_is_mock", False)
 TOPIC = "/tic_tac_toe/block_placement"
 
 
+def _ros_is_initialized():
+    core = getattr(rospy, "core", None)
+    is_initialized = getattr(core, "is_initialized", None)
+    if callable(is_initialized):
+        try:
+            return bool(is_initialized())
+        except Exception:
+            return False
+    return False
+
+
 @dataclass
 class GridFrame:
     origin_x: float = 0.40
@@ -63,7 +74,7 @@ class BlockPosePublisher:
     def __init__(self, grid=None, topic=TOPIC, node_name="tic_tac_toe_node", init_node=True):
         self.grid = grid or GridFrame()
         self.topic = topic
-        if init_node:
+        if init_node and not _ros_is_initialized():
             rospy.init_node(node_name, anonymous=True)
         self.publisher = rospy.Publisher(topic, PoseStamped, queue_size=10)
         self._seq = 0
