@@ -750,7 +750,14 @@ class RealTicTacToeRobot:
         segment_durations, hold_durations = self._trajectory_durations(cart_waypoints)
 
         for i, (waypoint_name, waypoint) in enumerate(cart_waypoints):
-            self._goto_pose(waypoint, segment_durations[i], waypoint_name)
+            if waypoint_name in ("close_gripper", "open_gripper"):
+                # Pure gripper command; skip the Cartesian goto_pose entirely to
+                # avoid a transient re-initialization of the Cartesian motion
+                # generator on an effectively zero-distance target, which otherwise
+                # causes a noticeable jerk synchronized with the gripper motion.
+                pass
+            else:
+                self._goto_pose(waypoint, segment_durations[i], waypoint_name)
             self._apply_gripper_command(waypoint_name)
             self._hold_with_safety(hold_durations[i], f"{waypoint_name} hold")
             print(f"[project_real] completed waypoint: {waypoint_name}")
